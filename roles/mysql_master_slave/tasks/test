@@ -1,0 +1,29 @@
+- name: Deploy the MySQL replication my.cnf config file.
+  template:
+    src: 'my.cnf.j2'
+    dest: /etc/my.cnf
+    owner: '{{ owner }}'
+    group: '{{ group }}'
+    mode: '{{ fmode }}'
+
+- name: Update my.cnf server-id.
+  lineinfile:
+    path: '/etc/my.cnf'
+    state: '{{ state }}'
+    regexp: '^server-id(.*)?'
+    line: 'server-id = 1'
+  when: inventory_hostname in groups['mysql_master']
+
+- name: Update my.cnf server-id.
+  lineinfile:
+    path: '/etc/my.cnf'
+    state: '{{ state }}'
+    regexp: '^server-id(.*)?'
+    line: 'server-id = 2'
+  when: inventory_hostname in groups['mysql_slave']
+
+- name: Restart mysqld service daemon on Master node.
+  service:
+    name: mysqld
+    state: restarted
+  when: inventory_hostname in groups['mysql_master']

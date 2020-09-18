@@ -21,16 +21,80 @@
     regexp: '^SELINUX=(.*)?'
     line: 'SELINUX=disabled'
 
-- name: Install EPEL Yum Repo.
+- name: Install MySQL YUM Repo Release.
   yum:
-    name: epel-release
+    name: 'http://repo.mysql.com/mysql80-community-release-el7.rpm'
     state: '{{ state }}'
 
-- name: Configuring MySQL YUM Repo.
-  yum_repository:
-    name: 'MySQL Repo'
-    baseurl: 'http://repo.mysql.com/yum/mysql-8.0-community/el/7/$basearch/'
-    file: 'mysql-community'
-    enabled: true
-    gpgcheck: true
-    gpgkey: 'file:///etc/pki/rpm-gpg/RPM-GPG-KEY-mysql'
+- name: Enable MySQL Repo.
+  command: "{{ item }}"
+  args:
+    warn: false
+  with_items:
+    - yum repolist enabled | grep "mysql.*-community.*"
+    - sudo yum-config-manager --enable mysql80-community
+
+- name: Install MySQL Packages.
+  yum:
+    name: ['mysql-community-server', 'mysql-workbench-community', 'mysql-community-devel', 'mysql-community-libs', 'mysql-community-common', 'mysql-community-client', 'MySQL-python', 'mysql-connector-odbc', 'mysql-connector-odbc-setup']
+    state: '{{ state }}'
+
+- name: Configure hostname.
+  shell: >
+    hostnamectl set-hostname "{{ ansible_hostname }}a.{{ ansible_domain }}" > hosta.log
+  args:
+    executable: /bin/bash
+    creates: hosta.log
+  when: inventory_hostname in groups['mysql_master']
+
+- name: Configure hostname.
+  shell: >
+    hostnamectl set-hostname "{{ ansible_hostname }}b.{{ ansible_domain }}" > hostb.log
+  args:
+    executable: /bin/bash
+    creates: hostb.log
+  when: inventory_hostname in groups['mysql_slave']
+
+- name: Fetching IP.
+  local_action: "copy content='{{ ansible_all_ipv4_addresses[0] }}     {{ ansible_hostname }}.{{ ansible_domain }}' dest=file/hosta"
+  when: inventory_hostname in groups['mysql_master']
+
+- name: Fetching IP.
+  local_action: "copy content='{{ ansible_all_ipv4_addresses[0] }}     {{ ansible_hostname }}.{{ ansible_domain }}' dest=file/hostb"
+  when: inventory_hostname in groups['mysql_slave']
+
+- name: Concatenate two files into one.
+  assemble:
+    src: file
+    dest: myhost
+  delegate_to: localhost
+
+- name: Deploy hosts file.
+  copy:
+    src: myhost
+    dest: /etc/hosts
+    owner: "{{ owner }}"
+    group: "{{ group }}"
+    mode: "{{ fmode }}"
+
+- name: Deploy temp pass.
+  copy:
+    src: files/.my.cnf
+    dest: "~/.my.cnf"
+
+- name: Startup mysqld service daemon.
+  service:
+    name: mysqld
+    state: started
+    enabled: yes
+
+- name: Add mysql admin user.
+  mysql_user:
+    login_user: root
+    login_password: 'Mytest123456'
+    name: admin
+    password: 'Admin123456'
+    encrypted: yes
+    priv: '*.*:ALL,GRANT'
+    state: '{{ state }}'
+
