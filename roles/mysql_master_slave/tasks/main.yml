@@ -1,0 +1,4 @@
+---
+# tasks file for mysql_master_slave
+- name: Calling mysql.yml
+  include_tasks: mysql.yml

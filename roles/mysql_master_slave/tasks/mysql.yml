@@ -1,0 +1,36 @@
+- name: Install Linux system packages.
+  yum:
+    name: ["gcc", "libffi-devel", "python3-devel", "libcurl-devel", "zlib-devel", "readline-devel", "ncurses-devel", "wget", "telnet", "net-tools"]
+    state: "{{ state }}"
+
+- name: Disable Linux firewalld.
+  service:
+    name: firewalld
+    state: stopped
+    enabled: no
+
+- name: Set SELinux to disabled mode.
+  selinux:
+    policy: targeted
+    state: disabled
+
+- name: Set SELinux to disabled mode in the config file.
+  lineinfile:
+    path: '/etc/selinux/config'
+    state: '{{ state }}'
+    regexp: '^SELINUX=(.*)?'
+    line: 'SELINUX=disabled'
+
+- name: Install EPEL Yum Repo.
+  yum:
+    name: epel-release
+    state: '{{ state }}'
+
+- name: Configuring MySQL YUM Repo.
+  yum_repository:
+    name: 'MySQL Repo'
+    baseurl: 'http://repo.mysql.com/yum/mysql-8.0-community/el/7/$basearch/'
+    file: 'mysql-community'
+    enabled: true
+    gpgcheck: true
+    gpgkey: 'file:///etc/pki/rpm-gpg/RPM-GPG-KEY-mysql'

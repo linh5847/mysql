@@ -1,0 +1,9 @@
+---
+state: present
+dstate: "directory"
+owner: "root"
+group: "root"
+dmode: 755
+fmode: 644
+user_owner: "mysql"
+user_group: "mysql"
