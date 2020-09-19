@@ -56,11 +56,11 @@
   when: inventory_hostname in groups['mysql_slave']
 
 - name: Fetching IP.
-  local_action: "copy content='{{ ansible_all_ipv4_addresses[0] }}     {{ ansible_hostname }}.{{ ansible_domain }}' dest=file/hosta"
+  local_action: "copy content='{{ ansible_all_ipv4_addresses[1] }}     {{ ansible_hostname }}.{{ ansible_domain }}' dest=file/hosta"
   when: inventory_hostname in groups['mysql_master']
 
 - name: Fetching IP.
-  local_action: "copy content='{{ ansible_all_ipv4_addresses[0] }}     {{ ansible_hostname }}.{{ ansible_domain }}' dest=file/hostb"
+  local_action: "copy content='{{ ansible_all_ipv4_addresses[1] }}     {{ ansible_hostname }}.{{ ansible_domain }}' dest=file/hostb"
   when: inventory_hostname in groups['mysql_slave']
 
 - name: Concatenate two files into one.
@@ -77,10 +77,12 @@
     group: "{{ group }}"
     mode: "{{ fmode }}"
 
-- name: Deploy temp pass.
-  copy:
-    src: files/.my.cnf
-    dest: "~/.my.cnf"
+- name: Update my.cnf config.
+  lineinfile:
+    path: '/etc/my.cnf'
+    state: '{{ state }}'
+    line: 'skip-grant-tables'
+    create: yes
 
 - name: Startup mysqld service daemon.
   service:
@@ -90,11 +92,115 @@
 
 - name: Add mysql admin user.
   mysql_user:
-    login_user: root
-    login_password: 'Mytest123456'
     name: admin
-    password: 'Admin123456'
-    encrypted: yes
-    priv: '*.*:ALL,GRANT'
-    state: '{{ state }}'
+    host: "%"
+    password: "Admin123456"
+    priv: "*.*:ALL,GRANT"
+    state: "{{ state }}"
 
+- name: Create replicate user.
+  mysql_user:
+    name: replica
+    host: "%"
+    password: "S3cr3tPaSSw0rd"
+    priv: "*.*:REPLICATION SLAVE"
+    state: "{{ state }}"
+
+- name: Deploy the MySQL replication my.cnf config file.
+  template:
+    src: 'my.cnf.j2'
+    dest: /etc/my.cnf
+    owner: '{{ owner }}'
+    group: '{{ group }}'
+    mode: '{{ fmode }}'
+
+- name: Update my.cnf server-id.
+  lineinfile:
+    path: '/etc/my.cnf'
+    state: '{{ state }}'
+    regexp: '^server-id(.*)?'
+    line: 'server-id = 1'
+  when: inventory_hostname in groups['mysql_master']
+
+- name: Update my.cnf server-id.
+  lineinfile:
+    path: '/etc/my.cnf'
+    state: '{{ state }}'
+    regexp: '^server-id(.*)?'
+    line: 'server-id = 2'
+  when: inventory_hostname in groups['mysql_slave']
+
+- name: Restart mysqld service daemon on Master node.
+  service:
+    name: mysqld
+    state: restarted
+  when: inventory_hostname in groups['mysql_master']
+
+- name: Reset master.
+  shell: >
+    /usr/bin/mysql -u root -e "RESET MASTER" > master_cluster_reset.log
+  args:
+    executable: /bin/bash
+    creates: master_cluster_reset.log
+  when: inventory_hostname in groups['mysql_master']
+
+- name: Check Master status.
+  mysql_replication:
+    mode: getmaster
+  register: mstatus
+  when: inventory_hostname in groups['mysql_master']
+
+- debug:
+    msg: "{{ mstatus }}"
+  when: inventory_hostname in groups['mysql_master']
+
+- name: Restart mysql service daemon on slave node.
+  service:
+    name: mysqld
+    state: restarted
+  when: inventory_hostname in groups['mysql_slave']
+
+- name: Stop slave thread.
+  mysql_replication:
+    mode: stopslave
+  when: inventory_hostname in groups['mysql_slave']
+
+- name: Get master IP.
+  shell: >
+    echo "{{ ansible_all_ipv4_addresses[1] }}" > masterip.log
+  register: masterip
+  args:
+    executable: /bin/bash
+    creates: masterip.log
+  when: inventory_hostname in groups['mysql_master']
+
+- debug:
+    msg: "{{ masterip.stdout }}"
+  when: inventory_hostname in groups['mysql_master']
+
+#- name: Setup replication on slave node.
+#  mysql_replication:
+#    mode: changemaster
+#    master_host: "{{ masterip.stdout }}"
+#    master_user: "replica"
+#    master_password: "S3cr3tPaSSw0rd"
+#    master_log_file: "{{ mstatus.stdout_lines[1] }}"
+#    master_log_pos: "{{ mstatus.stdout_lines[2] }}"
+#  when: inventory_hostname in groups['mysql_slave']
+#
+#- name: Check slave status.
+#  mysql_replication:
+#    mode: getslave
+#    login_host: "{{ ansible_fqdn }}"
+#    login_port: 3308
+#  when: inventory_hostname in groups['mysql_slave']
+
+- name: cleanup
+  file:
+    path: "{{ item }}"
+    state: absent
+  with_items:
+    - myhost
+    - file/hosta
+    - file/hostb
+  delegate_to: localhost
