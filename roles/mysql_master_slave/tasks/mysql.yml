@@ -56,11 +56,11 @@
   when: inventory_hostname in groups['mysql_slave']
 
 - name: Fetching IP.
-  local_action: "copy content='{{ ansible_all_ipv4_addresses[0] }}     {{ ansible_hostname }}.{{ ansible_domain }}' dest=file/hosta"
+  local_action: "copy content='{{ ansible_all_ipv4_addresses[1] }}     {{ ansible_hostname }}.{{ ansible_domain }}' dest=file/hosta"
   when: inventory_hostname in groups['mysql_master']
 
 - name: Fetching IP.
-  local_action: "copy content='{{ ansible_all_ipv4_addresses[0] }}     {{ ansible_hostname }}.{{ ansible_domain }}' dest=file/hostb"
+  local_action: "copy content='{{ ansible_all_ipv4_addresses[1] }}     {{ ansible_hostname }}.{{ ansible_domain }}' dest=file/hostb"
   when: inventory_hostname in groups['mysql_slave']
 
 - name: Concatenate two files into one.
@@ -193,14 +193,14 @@
 
 - name: Get master IP.
   shell: >
-    echo "{{ ansible_all_ipv4_addresses[0] }}"
+    echo "{{ ansible_all_ipv4_addresses[1] }}"
   register: masterip
   args:
     executable: /bin/bash
   when: inventory_hostname in groups['mysql_master']
 
 - name: Fetching IP.
-  local_action: "copy content='ipaddress: \"{{ ansible_all_ipv4_addresses[0] }}\"' dest=afile/ip"
+  local_action: "copy content='ipaddress: \"{{ ansible_all_ipv4_addresses[1] }}\"' dest=afile/ip"
   when: inventory_hostname in groups['mysql_master']
 
 - name: Fetching binary log from the output.
