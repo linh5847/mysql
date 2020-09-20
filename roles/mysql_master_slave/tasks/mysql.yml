@@ -56,17 +56,18 @@
   when: inventory_hostname in groups['mysql_slave']
 
 - name: Fetching IP.
-  local_action: "copy content='{{ ansible_all_ipv4_addresses[1] }}     {{ ansible_hostname }}.{{ ansible_domain }}' dest=file/hosta"
+  local_action: "copy content='{{ ansible_all_ipv4_addresses[0] }}     {{ ansible_hostname }}.{{ ansible_domain }}' dest=file/hosta"
   when: inventory_hostname in groups['mysql_master']
 
 - name: Fetching IP.
-  local_action: "copy content='{{ ansible_all_ipv4_addresses[1] }}     {{ ansible_hostname }}.{{ ansible_domain }}' dest=file/hostb"
+  local_action: "copy content='{{ ansible_all_ipv4_addresses[0] }}     {{ ansible_hostname }}.{{ ansible_domain }}' dest=file/hostb"
   when: inventory_hostname in groups['mysql_slave']
 
 - name: Concatenate two files into one.
   assemble:
     src: file
     dest: myhost
+    mode: "{{ fmode }}"
   delegate_to: localhost
 
 - name: Deploy hosts file.
@@ -77,34 +78,63 @@
     group: "{{ group }}"
     mode: "{{ fmode }}"
 
-- name: Update my.cnf config.
+- name: cleanup
+  file:
+    path: "{{ item }}"
+    state: absent
+  with_items:
+    - myhost
+    - file/hosta
+    - file/hostb
+  delegate_to: localhost
+
+- name: Add port to my.cnf config.
   lineinfile:
     path: '/etc/my.cnf'
     state: '{{ state }}'
-    line: 'skip-grant-tables'
+    line: 'port = 3306'
     create: yes
 
-- name: Startup mysqld service daemon.
+- name: Add MySQL bind-address to config file.
+  lineinfile:
+    path: '/etc/my.cnf'
+    state: '{{ state }}'
+    line: 'bind-address = 0.0.0.0'
+    create: yes
+
+- name: Update systemd.
+  systemd:
+    daemon_reload: yes
+
+- name: Start mysqld service.
   service:
     name: mysqld
     state: started
-    enabled: yes
 
-- name: Add mysql admin user.
-  mysql_user:
-    name: admin
-    host: "%"
-    password: "Admin123456"
-    priv: "*.*:ALL,GRANT"
-    state: "{{ state }}"
+- name: Deploy MySQL update password.
+  template:
+    src: "updatepass.sh.j2"
+    dest: /tmp/updatepass.sh
+    mode: "{{ dmode }}"
+
+- name: Update MySQL root password.
+  shell: >
+    ./updatepass.sh > pass.log
+  args:
+    executable: /bin/bash
+    chdir: /tmp
+    creates: pass.log
 
 - name: Create replicate user.
   mysql_user:
+    login_user: admin
+    login_password: 'Ad^m2nPassW0rd'
     name: replica
     host: "%"
-    password: "S3cr3tPaSSw0rd"
-    priv: "*.*:REPLICATION SLAVE"
+    password: "S3cr3tP^SSw0rd"
+    priv: "*.*:REPLICATION SLAVE,REPLICATION CLIENT"
     state: "{{ state }}"
+  no_log: true
 
 - name: Deploy the MySQL replication my.cnf config file.
   template:
@@ -136,22 +166,16 @@
     state: restarted
   when: inventory_hostname in groups['mysql_master']
 
-- name: Reset master.
-  shell: >
-    /usr/bin/mysql -u root -e "RESET MASTER" > master_cluster_reset.log
-  args:
-    executable: /bin/bash
-    creates: master_cluster_reset.log
-  when: inventory_hostname in groups['mysql_master']
-
 - name: Check Master status.
   mysql_replication:
     mode: getmaster
+    login_user: admin
+    login_password: 'Ad^m2nPassW0rd'
   register: mstatus
   when: inventory_hostname in groups['mysql_master']
 
 - debug:
-    msg: "{{ mstatus }}"
+    msg: "{{ mstatus }} "
   when: inventory_hostname in groups['mysql_master']
 
 - name: Restart mysql service daemon on slave node.
@@ -163,44 +187,100 @@
 - name: Stop slave thread.
   mysql_replication:
     mode: stopslave
+    login_user: admin
+    login_password: 'Ad^m2nPassW0rd'
   when: inventory_hostname in groups['mysql_slave']
 
 - name: Get master IP.
   shell: >
-    echo "{{ ansible_all_ipv4_addresses[1] }}" > masterip.log
+    echo "{{ ansible_all_ipv4_addresses[0] }}"
   register: masterip
   args:
     executable: /bin/bash
-    creates: masterip.log
   when: inventory_hostname in groups['mysql_master']
+
+- name: insert ip address to file.
+  lineinfile:
+    path: "group_vars/all/all.yml"
+    state: "{{ state }}"
+    line: "ipaddress: \"{{ masterip.stdout }}\""
+    create: yes
+  delegate_to: localhost
+  when: inventory_hostname in groups['mysql_master']
+
+- name: Insert binary log output into a file.
+  lineinfile:
+    path: "group_vars/all/all.yml"
+    state: "{{ state }}"
+    line: "binlog: \"{{ mstatus.File }}\""
+    create: yes
+  delegate_to: localhost
+  when: inventory_hostname in groups['mysql_master']
+
+- name: Insert binary log position output into a file.
+  lineinfile:
+    path: "group_vars/all/all.yml"
+    state: "{{ state }}"
+    line: "logpos: \"{{ mstatus.Position }}\""
+    create: yes
+  delegate_to: localhost
+  when: inventory_hostname in groups['mysql_master']
+
+- pause:
+    minutes: 1
+
+- name: Setup replication on slave node.
+  mysql_replication:
+    login_user: admin
+    login_password: 'Ad^m2nPassW0rd'
+    mode: changemaster
+    master_host: "{{ ipaddress }}"
+    master_user: "replica"
+    master_password: "S3cr3tP^SSw0rd"
+    master_log_file: "{{ binlog }}"
+    master_log_pos: "{{ logpos }}"
+    master_connect_retry: 10
+  when: inventory_hostname in groups['mysql_slave']
+
+- name: Start slave.
+  mysql_replication:
+    login_user: admin
+    login_password: 'Ad^m2nPassW0rd'
+    mode: startslave
+  when: inventory_hostname in groups['mysql_slave']
+    
+- name: Check slave status.
+  mysql_replication:
+    login_user: admin
+    login_password: 'Ad^m2nPassW0rd'
+    mode: getslave
+  register: slavestatus
+  when: inventory_hostname in groups['mysql_slave']
 
 - debug:
-    msg: "{{ masterip.stdout }}"
-  when: inventory_hostname in groups['mysql_master']
+    msg: "{{ slavestatus }}"
+  when: inventory_hostname in groups['mysql_slave']
 
-#- name: Setup replication on slave node.
-#  mysql_replication:
-#    mode: changemaster
-#    master_host: "{{ masterip.stdout }}"
-#    master_user: "replica"
-#    master_password: "S3cr3tPaSSw0rd"
-#    master_log_file: "{{ mstatus.stdout_lines[1] }}"
-#    master_log_pos: "{{ mstatus.stdout_lines[2] }}"
-#  when: inventory_hostname in groups['mysql_slave']
-#
-#- name: Check slave status.
-#  mysql_replication:
-#    mode: getslave
-#    login_host: "{{ ansible_fqdn }}"
-#    login_port: 3308
-#  when: inventory_hostname in groups['mysql_slave']
-
-- name: cleanup
-  file:
-    path: "{{ item }}"
+- name: delete existent ipaddress output in the variable.
+  lineinfile:
+    path: "group_vars/all/all.yml"
     state: absent
-  with_items:
-    - myhost
-    - file/hosta
-    - file/hostb
+    regexp: '^ipaddress(.*)?'
+    line: ''
+  delegate_to: localhost
+
+- name: delete existent binary log output in the variable.
+  lineinfile:
+    path: "group_vars/all/all.yml"
+    state: absent
+    regexp: '^binlog(.*)?'
+    line: ''
+  delegate_to: localhost
+
+- name: delete existent binary log position output in the variable.
+  lineinfile:
+    path: "group_vars/all/all.yml"
+    state: absent
+    regexp: '^logpos(.*)?'
+    line: ''
   delegate_to: localhost

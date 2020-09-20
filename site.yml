@@ -3,6 +3,6 @@
   hosts: all
   remote_user: vagrant
   become: true
-
+  
   roles:
   - { role: mysql_master_slave, tags: mysql_master_slave, when: ansible_os_family == 'RedHat' or ansible_distribution == 'CentOS' }
