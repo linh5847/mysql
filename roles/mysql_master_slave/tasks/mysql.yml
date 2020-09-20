@@ -199,32 +199,33 @@
     executable: /bin/bash
   when: inventory_hostname in groups['mysql_master']
 
-- name: insert ip address to file.
-  lineinfile:
-    path: "group_vars/all/all.yml"
-    state: "{{ state }}"
-    line: "ipaddress: \"{{ masterip.stdout }}\""
-    create: yes
-  delegate_to: localhost
+- name: Fetching IP.
+  local_action: "copy content='ipaddress: \"{{ ansible_all_ipv4_addresses[0] }}\"' dest=afile/ip"
   when: inventory_hostname in groups['mysql_master']
 
-- name: Insert binary log output into a file.
-  lineinfile:
-    path: "group_vars/all/all.yml"
-    state: "{{ state }}"
-    line: "binlog: \"{{ mstatus.File }}\""
-    create: yes
-  delegate_to: localhost
+- name: Fetching binary log from the output.
+  local_action: "copy content='binlog: \"{{ mstatus.File }}\"' dest=afile/mbi"
   when: inventory_hostname in groups['mysql_master']
 
-- name: Insert binary log position output into a file.
-  lineinfile:
-    path: "group_vars/all/all.yml"
-    state: "{{ state }}"
-    line: "logpos: \"{{ mstatus.Position }}\""
-    create: yes
-  delegate_to: localhost
+- name: Fetching binary log position from the output.
+  local_action: "copy content='logpos: \"{{ mstatus.Position }}\"' dest=afile/mylo"
   when: inventory_hostname in groups['mysql_master']
+
+- name: merge variable.
+  assemble:
+    src: afile
+    dest: "myvar"
+    mode: "{{ fmode }}"
+  delegate_to: localhost
+
+- name: Deploy to variable folder.
+  copy:
+    src: "myvar"
+    dest: roles/mysql_master_slave/defaults/main.yml
+    owner: "{{ lookup('env', 'USER') }}"
+    group: "{{ lookup('env', 'USER') }}"
+    mode: "0664"
+  delegate_to: localhost
 
 - pause:
     minutes: 1
@@ -261,26 +262,13 @@
     msg: "{{ slavestatus }}"
   when: inventory_hostname in groups['mysql_slave']
 
-- name: delete existent ipaddress output in the variable.
-  lineinfile:
-    path: "group_vars/all/all.yml"
+- name: cleanup
+  file:
+    path: "{{ item }}"
     state: absent
-    regexp: '^ipaddress(.*)?'
-    line: ''
-  delegate_to: localhost
-
-- name: delete existent binary log output in the variable.
-  lineinfile:
-    path: "group_vars/all/all.yml"
-    state: absent
-    regexp: '^binlog(.*)?'
-    line: ''
-  delegate_to: localhost
-
-- name: delete existent binary log position output in the variable.
-  lineinfile:
-    path: "group_vars/all/all.yml"
-    state: absent
-    regexp: '^logpos(.*)?'
-    line: ''
+  with_items:
+    - myvar
+    - afile/ip
+    - afile/mbi
+    - afile/mylo
   delegate_to: localhost
